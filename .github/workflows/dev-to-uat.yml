@@ -113,21 +113,12 @@ jobs:
           git checkout -b "$BRANCH" origin/uat
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Apply merge commit
+      - name: Apply PR changes as state (diff-based)
         run: |
           COMMIT="${{ steps.pr.outputs.merge_commit }}"
-
-          git cherry-pick -x -m 1 "$COMMIT" || {
-            if git status | grep -q "nothing to commit"; then
-              echo "No-op cherry-pick: changes already present in UAT."
-              git cherry-pick --skip
-              exit 1
-            fi
-
-            git cherry-pick --abort
-            echo "ERROR: Conflict detected.Needed Manual intervention"
-            exit 1
-          }
+          
+          git show "$COMMIT" --no-color --pretty="" | git apply --index
+          git commit -m "Promote Dev → UAT (${{ steps.pr.outputs.jira_id }})                  
 
       - name: Collect change details
         id: changes
@@ -190,3 +181,4 @@ jobs:
         run: |
           echo "Promotion Dev → UAT completed successfully."
           echo "Created PR: #${{ steps.create_pr.outputs.pr }}"
+
