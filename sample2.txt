@@ -1,5 +1,6 @@
 This is sample2.txt file
 created by ravi_teja
 Using feature branch feature/test3_JIRa-003
-For testing Dev to UAT scnrs
-#test 2
+For testing Dev to UAT scenaraios
+#test 3 --v3.0
+File is updated 3rd time 
