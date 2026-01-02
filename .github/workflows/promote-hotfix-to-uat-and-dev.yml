@@ -1,0 +1,152 @@
+name: 6. Sync Hotfix → UAT → DEV
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches:
+      - prod
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-hotfix-pr
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: >
+      github.event.pull_request.merged == true &&
+      startsWith(toLower(github.event.pull_request.head.ref), 'hotfix/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Validate hotfix branch & extract Jira ID
+        id: jira
+        run: |
+          shopt -s nocasematch
+
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+
+          if [[ ! "$BRANCH" =~ ^hotfix/ ]]; then
+            echo "ERROR: Branch is not a hotfix branch."
+            exit 1
+          fi
+
+          JIRA=$(echo "$BRANCH" | grep -oE "JIRA-[0-9]+" | head -1)
+
+          if [ -z "$JIRA" ]; then
+            echo "ERROR: Jira ID not found in branch name."
+            exit 1
+          fi
+
+          echo "jira=$JIRA" >> $GITHUB_OUTPUT
+
+      # ---------------- PROD → UAT ----------------
+
+      - name: Prepare sync branch (prod → uat)
+        id: uat
+        run: |
+          git fetch origin prod uat
+
+          PROD_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+
+          if git merge-base --is-ancestor "$PROD_SHA" origin/uat; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          BRANCH="sync/${{ steps.jira.outputs.jira }}-prod-to-uat-$(date +%s)"
+          git checkout -b "$BRANCH" origin/uat
+          git cherry-pick -x -m 1 "$PROD_SHA"
+          git push origin "$BRANCH"
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Create PR into UAT
+        if: steps.uat.outputs.skip == 'false'
+        id: pr_uat
+        run: |
+          BODY=$(printf "%s\n" \
+            "Automated hotfix sync from PROD to UAT" \
+            "" \
+            "Jira: ${{ steps.jira.outputs.jira }}")
+
+          PAYLOAD=$(jq -n \
+            --arg title "[HOTFIX][${{ steps.jira.outputs.jira }}] Prod → UAT Sync" \
+            --arg head "${{ steps.uat.outputs.branch }}" \
+            --arg base "uat" \
+            --arg body "$BODY" \
+            '{title:$title, head:$head, base:$base, body:$body}')
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls")
+
+          echo "pr=$(echo "$RESPONSE" | jq -r '.number')" >> $GITHUB_OUTPUT
+
+      # ---------------- PROD → DEV ----------------
+
+      - name: Prepare sync branch (prod → dev)
+        id: dev
+        run: |
+          git fetch origin prod dev
+
+          PROD_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+
+          if git merge-base --is-ancestor "$PROD_SHA" origin/dev; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          BRANCH="sync/${{ steps.jira.outputs.jira }}-prod-to-dev-$(date +%s)"
+          git checkout -b "$BRANCH" origin/dev
+          git cherry-pick -x -m 1 "$PROD_SHA"
+          git push origin "$BRANCH"
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Create PR into DEV
+        if: steps.dev.outputs.skip == 'false'
+        id: pr_dev
+        run: |
+          BODY=$(printf "%s\n" \
+            "Automated hotfix sync from PROD to DEV" \
+            "" \
+            "Jira: ${{ steps.jira.outputs.jira }}")
+
+          PAYLOAD=$(jq -n \
+            --arg title "[HOTFIX][${{ steps.jira.outputs.jira }}] Prod → DEV Sync" \
+            --arg head "${{ steps.dev.outputs.branch }}" \
+            --arg base "dev" \
+            --arg body "$BODY" \
+            '{title:$title, head:$head, base:$base, body:$body}')
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls")
+
+          echo "pr=$(echo "$RESPONSE" | jq -r '.number')" >> $GITHUB_OUTPUT
+
+      - name: Completed
+        run: |
+          echo "Hotfix sync completed"
+          echo "UAT PR: #${{ steps.pr_uat.outputs.pr }}"
+          echo "DEV PR: #${{ steps.pr_dev.outputs.pr }}"
