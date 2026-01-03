@@ -1,6 +1,7 @@
 This is sample2.txt file
 created by ravi_teja
 Using feature branch feature/test3_JIRa-003
-For testing Dev to UAT scenaraios
-#test 3 --v3.0
-File is updated 3rd time 
+For testing hotfix to prod scenarios
+#test 4 --v4.0
+File is updated 4th time 
+Using hotfix/test_JIRA-001
