@@ -44,7 +44,7 @@ jobs:
             exit 1
           fi
 
-          JIRA=$(echo "$BRANCH" | grep -oE "JIRA-[0-9]+" | head -1)
+          JIRA=$(echo "$BRANCH" | grep -oiE "JIRA-[0-9]+" | head -1)
 
           if [ -z "$JIRA" ]; then
             echo "ERROR: Jira ID not found in branch name."
@@ -150,3 +150,4 @@ jobs:
           echo "Hotfix sync completed"
           echo "UAT PR: #${{ steps.pr_uat.outputs.pr }}"
           echo "DEV PR: #${{ steps.pr_dev.outputs.pr }}"
+
