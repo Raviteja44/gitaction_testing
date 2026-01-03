@@ -96,9 +96,8 @@ jobs:
           EXISTING=$(curl -s \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls?base=uat&state=all" \
-          | jq -r --arg pr "#$SRC_PR" '
-              .[] | select(.body | contains("Source PR ID that merged changes into dev: " + $pr)) | .number
-            ')
+            | jq -r --arg pr "#$SRC_PR" \
+              '.[] | select(.body | contains("Source PR ID that merged changes into dev: " + $pr)) | .number')
 
           if [ -n "$EXISTING" ]; then
             echo "PR #$SRC_PR already promoted via UAT PR #$EXISTING"
@@ -113,41 +112,52 @@ jobs:
           git checkout -b "$BRANCH" origin/uat
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Apply PR changes as state (file-based)
+      - name: Apply merge commit
         run: |
-          PR="${{ steps.pr.outputs.source_pr }}"
+          COMMIT="${{ steps.pr.outputs.merge_commit }}"
+          echo "Applying merge commit $COMMIT onto UAT"
 
-          echo "Fetching file list for PR #$PR"
+          set +e
+          git cherry-pick -x -m 1 "$COMMIT"
+          RESULT=$?
+          set -e
 
-          FILES=$(curl -s \
-            -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR/files?per_page=100" \
-            | jq -r '.[].filename')
+          if [ $RESULT -eq 0 ]; then
+            echo "Cherry-pick applied cleanly. No conflicts."
+            exit 0
+          fi
 
-          if [ -z "$FILES" ]; then
-            echo "ERROR: No files found in PR."
+          echo "Cherry-pick resulted in conflicts. Inspecting conflict types..."
+
+          CONFLICTS=$(git diff --name-only --diff-filter=U)
+
+          if [ -z "$CONFLICTS" ]; then
+            echo "ERROR: Cherry-pick failed but no conflicted files found."
+            git cherry-pick --abort
             exit 1
           fi
 
-          for FILE in $FILES; do
-            echo "Applying $FILE from dev"
+          for FILE in $CONFLICTS; do
+            echo "Conflict detected in file: $FILE"
 
-            git show "origin/dev:$FILE" > "$FILE" || {
-              echo "ERROR: File $FILE not found in dev"
+            if git show HEAD:"$FILE" >/dev/null 2>&1; then
+              echo "Manual intervention required."
+              git cherry-pick --abort
               exit 1
-            }
+            fi
 
+            echo "Iteration case detected. Taking DEV version."
+            git checkout --theirs -- "$FILE"
             git add "$FILE"
           done
 
-          git commit -m "Promote Dev → UAT (${{ steps.pr.outputs.jira_id }})"
+          git cherry-pick --continue
 
       - name: Collect change details
         id: changes
         run: |
           FILES=$(git show --name-only --pretty="" HEAD)
           COUNT=$(echo "$FILES" | grep -c . || true)
-
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -175,7 +185,7 @@ jobs:
             "IMPORTANT: Use this PR ID for UAT → PROD promotion."
           )
 
-          TITLE="[${{ steps.pr.outputs.jira_id }}] Promote Dev changes to UAT"
+          TITLE="[${{ steps.pr.outputs.jira_id }}] Promote Dev changes to UAT (PR ID)"
 
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
@@ -196,11 +206,12 @@ jobs:
         run: |
           PR="${{ steps.create_pr.outputs.pr }}"
           JIRA_ID="${{ steps.pr.outputs.jira_id }}"
+          LABELS=$(jq -n '{labels: ["'"$JIRA_ID"'", "dev-to-uat"]}')
 
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg j "$JIRA_ID" '{labels: [$j, "dev-to-uat"]}')" \
+            -d "$LABELS" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${PR}/labels"
 
       - name: Completed
