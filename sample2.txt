@@ -2,6 +2,7 @@ This is sample2.txt file
 created by ravi_teja
 Using feature branch feature/test3_JIRa-003
 For testing hotfix to prod scenarios
-#test 5 --v5.0
+#test 6 --v6.0
 File is updated 5th time 
 Using hotfix/JIRA-005
+file is being updated again to v6.0
