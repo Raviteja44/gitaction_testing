@@ -40,7 +40,7 @@ jobs:
         run: |
           git fetch origin
           INPUT_BRANCH="${{ github.event.inputs.hotfix_branch }}"
-          MATCH=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+          MATCH=$(git for-each-ref --format='%(refname)' refs/remotes/origin \
             | grep -i "^origin/${INPUT_BRANCH}$" | head -1)
           if [ -z "$MATCH" ]; then
             echo "ERROR: Hotfix branch does not exist."
@@ -144,5 +144,6 @@ jobs:
         run: |
           echo "Hotfix → Prod workflow completed successfully."
           echo "Created PR: #${{ steps.create_pr.outputs.pr }}"
+
 
 
