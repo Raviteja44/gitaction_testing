@@ -39,12 +39,7 @@ jobs:
       - name: Validate hotfix branch
         run: |
           git fetch origin
-          INPUT_BRANCH="${{ github.event.inputs.hotfix_branch }}"
-
-          MATCH=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
-            | grep -i "^${INPUT_BRANCH}$" | head -1)
-
-          if [ -z "$MATCH" ]; then
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${{ github.event.inputs.hotfix_branch }}"; then          
             echo "ERROR: Hotfix branch does not exist."
             exit 1
           fi
@@ -146,3 +141,4 @@ jobs:
         run: |
           echo "Hotfix → Prod workflow completed successfully."
           echo "Created PR: #${{ steps.create_pr.outputs.pr }}"
+
