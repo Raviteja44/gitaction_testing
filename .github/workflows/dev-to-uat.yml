@@ -95,12 +95,16 @@ jobs:
 
           EXISTING=$(curl -s \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls?base=uat&state=all" \
-            | jq -r --arg pr "#$SRC_PR" \
-              '.[] | select(.body | contains("Source PR ID that merged changes into dev: " + $pr)) | .number')
+            "https://api.github.com/repos/${{ github.repository }}/pulls?base=uat&state=closed" \
+            | jq -r --arg pr "#$SRC_PR" '
+              .[]
+              | select(.merged == true)
+              | select(.body | contains("Source PR ID that merged changes into dev: " + $pr))
+              | .number
+            ')
 
           if [ -n "$EXISTING" ]; then
-            echo "PR #$SRC_PR already promoted via UAT PR #$EXISTING"
+            echo "ERROR: Source PR #$SRC_PR was already MERGED into UAT via PR #$EXISTING"
             exit 1
           fi
 
