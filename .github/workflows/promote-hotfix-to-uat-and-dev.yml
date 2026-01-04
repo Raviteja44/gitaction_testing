@@ -1,4 +1,4 @@
-name: 6. Sync Hotfix → UAT → DEV
+name: 6. Syncing Hotfix changes to UAT and DEV
 
 on:
   pull_request_target:
@@ -40,46 +40,59 @@ jobs:
           BRANCH="${{ github.event.pull_request.head.ref }}"
 
           if [[ ! "$BRANCH" =~ ^hotfix/ ]]; then
-            echo "ERROR: Branch is not a hotfix branch."
+            echo "ERROR: Branch is not a hotfix branch"
             exit 1
           fi
 
           JIRA=$(echo "$BRANCH" | grep -oiE "JIRA-[0-9]+" | head -1)
 
           if [ -z "$JIRA" ]; then
-            echo "ERROR: Jira ID not found in branch name."
+            echo "ERROR: Jira ID not found in branch name"
             exit 1
           fi
 
+          echo "Detected Jira ID: $JIRA"
           echo "jira=$JIRA" >> $GITHUB_OUTPUT
 
-      # ---------------- PROD → UAT ----------------
+      # ---------------- PROD to UAT ----------------
 
       - name: Prepare sync branch (prod → uat)
         id: uat
         continue-on-error: true
         run: |
           git fetch origin prod uat
-
           PROD_SHA="${{ github.event.pull_request.merge_commit_sha }}"
 
+          echo "Starting PROD → UAT sync for commit $PROD_SHA"
+
           if git merge-base --is-ancestor "$PROD_SHA" origin/uat; then
+            echo "PROD commit already exists in UAT — skipping"
             echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           BRANCH="sync/${{ steps.jira.outputs.jira }}-prod-to-uat-$(date +%s)"
           git checkout -b "$BRANCH" origin/uat
-          git cherry-pick -x -m 1 "$PROD_SHA"
+
+          if ! git cherry-pick -x -m 1 "$PROD_SHA"; then
+            echo "UAT sync failed due to merge conflicts while cherry-picking PROD commit"
+            git status --short
+            git cherry-pick --abort
+            exit 1
+          fi
+
           git push origin "$BRANCH"
 
+          echo "UAT sync branch created: $BRANCH"
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "skip=false" >> $GITHUB_OUTPUT
 
       - name: Create PR into UAT
-        if: steps.uat.outputs.skip == 'false' && steps.uat.outputs.skip == 'false'
+        if: steps.uat.outcome == 'success' && steps.uat.outputs.skip == 'false'
         id: pr_uat
         run: |
+          echo "Creating UAT pull request"
+
           BODY=$(printf "%s\n" \
             "Automated hotfix sync from PROD to UAT" \
             "" \
@@ -98,27 +111,38 @@ jobs:
             -d "$PAYLOAD" \
             "https://api.github.com/repos/${{ github.repository }}/pulls")
 
+          echo "UAT PR created: #$(echo "$RESPONSE" | jq -r '.number')"
           echo "pr=$(echo "$RESPONSE" | jq -r '.number')" >> $GITHUB_OUTPUT
 
-      # ---------------- PROD → DEV ----------------
+      # ---------------- PROD to DEV ----------------
 
       - name: Prepare sync branch (prod → dev)
         id: dev
         run: |
           git fetch origin prod dev
-
           PROD_SHA="${{ github.event.pull_request.merge_commit_sha }}"
 
+          echo "Starting PROD → DEV sync for commit $PROD_SHA"
+
           if git merge-base --is-ancestor "$PROD_SHA" origin/dev; then
+            echo "PROD commit already exists in DEV — skipping"
             echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           BRANCH="sync/${{ steps.jira.outputs.jira }}-prod-to-dev-$(date +%s)"
           git checkout -b "$BRANCH" origin/dev
-          git cherry-pick -x -m 1 "$PROD_SHA"
+
+          if ! git cherry-pick -x -m 1 "$PROD_SHA"; then
+            echo "DEV sync failed due to merge conflicts"
+            git status --short
+            git cherry-pick --abort
+            exit 1
+          fi
+
           git push origin "$BRANCH"
 
+          echo "DEV sync branch created: $BRANCH"
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "skip=false" >> $GITHUB_OUTPUT
 
@@ -126,6 +150,8 @@ jobs:
         if: steps.dev.outputs.skip == 'false'
         id: pr_dev
         run: |
+          echo "Creating DEV pull request"
+
           BODY=$(printf "%s\n" \
             "Automated hotfix sync from PROD to DEV" \
             "" \
@@ -144,12 +170,17 @@ jobs:
             -d "$PAYLOAD" \
             "https://api.github.com/repos/${{ github.repository }}/pulls")
 
+          echo "DEV PR created: #$(echo "$RESPONSE" | jq -r '.number')"
           echo "pr=$(echo "$RESPONSE" | jq -r '.number')" >> $GITHUB_OUTPUT
+
+      - name: Fail workflow if UAT sync failed
+        if: steps.uat.outcome == 'failure'
+        run: |
+          echo "Workflow failed: UAT sync had merge conflicts"
+          exit 1
 
       - name: Completed
         run: |
           echo "Hotfix sync completed"
           echo "UAT PR: #${{ steps.pr_uat.outputs.pr }}"
           echo "DEV PR: #${{ steps.pr_dev.outputs.pr }}"
-
-
