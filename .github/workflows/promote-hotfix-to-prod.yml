@@ -31,7 +31,7 @@ jobs:
           ACTOR="${{ github.actor }}"
           echo "Triggered by: $ACTOR"
 
-          if ! grep -qx "$ACTOR" .hotfix-managers; then
+          if ! grep -qx "$ACTOR" .github/hotfix-managers; then
             echo "ERROR: Only users listed in .hotfix-managers can trigger hotfix workflow."
             exit 1
           fi
@@ -102,7 +102,7 @@ jobs:
             "" \
             "IMPORTANT:" \
             "- This hotfix will be auto-synced to UAT and DEV after merge." \
-            "- Please review carefully before approval."
+            "- Please review before approval."
           )
 
           PAYLOAD=$(jq -n \
@@ -144,6 +144,7 @@ jobs:
         run: |
           echo "Hotfix → Prod workflow completed successfully."
           echo "Created PR: #${{ steps.create_pr.outputs.pr }}"
+
 
 
 
