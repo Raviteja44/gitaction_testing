@@ -1,5 +1,5 @@
-This is smpl3.txt fn cvm dmv mzdf bkmc m i
+This is smadfgpl3.txt fi
 Introduced by feature/test_JIRA-009
 Modifying using hotfix/JIRA-006
-nvkjnkdfsnkjnfkm m fbm bf b
-12234mm
+
+modifying using hotfix/JIRA-345
