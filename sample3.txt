@@ -1,3 +1,5 @@
-This is smpl3.txt fi
+This is smadfgpl3.txt fi
 Introduced by feature/test_JIRA-009
 Modifying using hotfix/JIRA-006
+
+modifying using hotfix/JIRA-345
