@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: "PR number merged into UAT"
+        description: "PR number merged into uat"
         required: true
         type: number
       uat_test_s3_path:
@@ -41,7 +41,6 @@ jobs:
         id: pr
         run: |
           INPUT_PR="${{ github.event.inputs.pr_number }}"
-
           PR_JSON=$(curl -s \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
@@ -60,6 +59,7 @@ jobs:
           MERGE_SHA=$(echo "$PR_JSON" | jq -r '.merge_commit_sha')
           TITLE=$(echo "$PR_JSON" | jq -r '.title')
           BODY=$(echo "$PR_JSON" | jq -r '.body')
+          SOURCE_BRANCH=$(echo "$PR_JSON" | jq -r '.head.ref')
 
           JIRA_ID=$(echo "$TITLE $BODY" | grep -oiE "jira-[0-9]+" | head -1)
 
@@ -73,11 +73,11 @@ jobs:
           echo "merge_commit=$MERGE_SHA" >> $GITHUB_OUTPUT
           echo "jira_id=$JIRA_ID" >> $GITHUB_OUTPUT
           echo "source_pr=$INPUT_PR" >> $GITHUB_OUTPUT
+          echo "source_branch=$SOURCE_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Check for existing open promotion PRs
         run: |
           SOURCE_PR="${{ steps.pr.outputs.source_pr }}"
-
           OPEN_PR=$(curl -s \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls?state=open&base=prod" \
@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
 
-      - name: Prevent duplicate promotion (merged only)
+      - name: Prevent duplicate promotion
         run: |
           SRC_PR="${{ steps.pr.outputs.source_pr }}"
 
@@ -97,7 +97,7 @@ jobs:
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/pulls?base=prod&state=closed" \
             | jq -r --arg pr "#$SRC_PR" '
-              .[]
+              .[] 
               | select(.merged == true)
               | select(.body | contains("Source PR ID that merged changes into uat: " + $pr))
               | .number
@@ -112,7 +112,7 @@ jobs:
         id: branch
         run: |
           TS=$(date +%s)
-          BRANCH="promote/${{ steps.pr.outputs.jira_id }}-uat-pr${{ steps.pr.outputs.source_pr }}-${TS}"
+          BRANCH="promote/${{ steps.pr.outputs.jira_id }}-pr${{ steps.pr.outputs.source_pr }}-${TS}"
           git checkout -b "$BRANCH" origin/prod
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
@@ -143,17 +143,25 @@ jobs:
 
           for FILE in $CONFLICTS; do
             echo "Conflict detected in file: $FILE"
-            echo "Manual intervention required."
-            git cherry-pick --abort
-            exit 1
+
+            if git show HEAD:"$FILE" >/dev/null 2>&1; then
+              echo "Manual intervention required."
+              git cherry-pick --abort
+              exit 1
+            fi
+
+            echo "Iteration case detected. Taking UAT version."
+            git checkout --theirs -- "$FILE"
+            git add "$FILE"
           done
+
+          git cherry-pick --continue
 
       - name: Collect change details
         id: changes
         run: |
           FILES=$(git show --name-only --pretty="" HEAD)
           COUNT=$(echo "$FILES" | grep -c . || true)
-
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -178,10 +186,10 @@ jobs:
             "Changed Files (${{ steps.changes.outputs.file_count }}):" \
             "${{ steps.changes.outputs.files }}" \
             "UAT Testing Evidence (S3): $S3_PATH" \
-            "IMPORTANT: This is a PROD deployment PR."
+            "FINAL PROD DEPLOYMENT PR"
           )
 
-          TITLE="[${{ steps.pr.outputs.jira_id }}] Promote UAT changes to PROD"
+          TITLE="[${{ steps.pr.outputs.jira_id }}] Promote UAT changes to PROD (PR ID)"
 
           RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
